@@ -10,7 +10,7 @@
 
 当赋予大语言模型（如 Claude、Cursor 等）自动执行各类系统级别 Skill 的能力时，系统安全性会受到潜在的第三方指令污染和环境威胁。本审计器能保护您的本地机器和隐私数据不被不受信任的 AI 技能劫持。
 
-🔗 **项目主页 / GitHub Repository地址**: [https://github.com/Echoxiawan/skillguard](https://github.com/Echoxiawan/skillguard) *(请替换为实际地址)*
+🔗 **项目主页 / GitHub Repository地址**: [https://github.com/Echoxiawan/skillguard](https://github.com/Echoxiawan/skillguard) 
 
 ---
 
