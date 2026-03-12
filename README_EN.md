@@ -10,7 +10,7 @@
 
 When Large Language Models (like Claude, Cursor, etc.) are granted the capability to automatically execute system-level Skills, the system security is exposed to potential third-party instruction contamination and environmental threats. This auditor protects your local machine and private data from being hijacked by untrusted AI skills.
 
-🔗 **Project Homepage / GitHub Repository**: [https://github.com/Echoxiawan/skillguard](https://github.com/Echoxiawan/skillguard) *(Please replace with actual URL)*
+🔗 **Project Homepage / GitHub Repository**: [https://github.com/Echoxiawan/skillguard](https://github.com/Echoxiawan/skillguard) 
 
 ---
 
