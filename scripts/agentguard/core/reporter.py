@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import List, Dict, Any
 
@@ -6,8 +7,13 @@ class MarkdownReporter:
     def __init__(self, lang="zh"):
         self.lang = lang
 
-    def generate_report(self, skills: List[Dict[str, Any]], output_dir: str):
-        report_path = os.path.join(output_dir, "SKILL_SECURITY_REPORT.md")
+    def generate_report(self, skills: List[Dict[str, Any]], output_dir: str,
+                        filename: str = "AGENT_SECURITY_REPORT.md",
+                        title: str = "AgentGuard Security Audit Report",
+                        subject_label: str = "Skill",
+                        total_label: str = "Skills Scanned"):
+        os.makedirs(output_dir, exist_ok=True)
+        report_path = os.path.join(output_dir, filename)
         
         # 统计数据
         total = len(skills)
@@ -23,11 +29,11 @@ class MarkdownReporter:
 
         # 生成报告头
         lines = [
-            "# SkillGuard Security Audit Report\n",
+            f"# {title}\n",
             "## Scan Information\n",
             f"**Scan Time:** {scan_time}",
             f"**Environment:** {env_name}",
-            f"**Total Skills Scanned:** {total}\n",
+            f"**Total {total_label}:** {total}\n",
             "## Risk Overview\n",
             f"- **Critical:** {risk_counts['Critical']}",
             f"- **High Risk:** {risk_counts['High Risk']}",
@@ -42,20 +48,21 @@ class MarkdownReporter:
             lines.append(f"*{msg}*\n")
 
         for skill in skills:
-            lines.extend(self._format_skill_section(skill))
+            lines.extend(self._format_skill_section(skill, subject_label))
             
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
             
         return report_path
 
-    def _format_skill_section(self, skill: Dict[str, Any]) -> List[str]:
-        name = skill.get("name", "Unknown")
+    def _format_skill_section(self, skill: Dict[str, Any],
+                              subject_label: str = "Skill") -> List[str]:
+        name = self._safe_text(skill.get("name", "Unknown"))
         score = skill.get("risk_score", 0)
         level = skill.get("risk_level", "Safe")
         
         lines = [
-            f"### Skill: {name}",
+            f"### {subject_label}: {name}",
             f"**Risk Score:** {score}",
             f"**Risk Level:** {level}\n",
             "#### Detected Issues\n"
@@ -68,11 +75,12 @@ class MarkdownReporter:
         else:
             for issue in issues:
                 desc = issue.get("desc_zh" if self.lang == "zh" else "desc_en")
-                file_name = os.path.basename(issue.get("file", "unknown"))
+                file_name = self._safe_text(os.path.basename(issue.get("file", "unknown")))
                 line_no = issue.get("line", 0)
-                snippet = issue.get("snippet", "")
+                snippet = self._safe_text(issue.get("snippet", ""))
                 
                 lines.append(f"- **[{issue['risk_level']}] {issue['category']}**: {desc}")
+                lines.append(f"  - Rule: {issue.get('rule_id', 'unknown')}")
                 lines.append(f"  - Location: `{file_name}:{line_no}`")
                 lines.append(f"  - Snippet: `{snippet}`")
             lines.append("")
@@ -92,6 +100,12 @@ class MarkdownReporter:
             
         return lines
 
+    @staticmethod
+    def _safe_text(value: Any) -> str:
+        """净化不可信元数据，阻止控制符和 Markdown 围栏逃逸。"""
+        text = str(value).replace(chr(96), "ˋ")
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+
     def _infer_attack_scenarios(self, issues: List[Dict[str, Any]]) -> List[str]:
         scenarios = set()
         for i in issues:
@@ -108,6 +122,10 @@ class MarkdownReporter:
                 scenarios.add("AI behavior manipulation / Jailbreak" if self.lang == "en" else "AI行为操纵 (AI Behavior manipulation) / 越狱破解 (Jailbreak)")
             elif cat == "Backdoor":
                 scenarios.add("Persistent hidden backdoor logic" if self.lang == "en" else "隐蔽的持久化后门访问 (Hidden Backdoor)")
+            elif cat in {"MCP Tool Poisoning", "MCP Tool Poisoning Chain"}:
+                scenarios.add("MCP content manipulates the agent or induces unsafe tool calls" if self.lang == "en" else "MCP 内容操纵 Agent 或诱导不安全的跨工具调用")
+            elif cat in {"MCP Annotation Mismatch", "MCP Tool Metadata"}:
+                scenarios.add("Misleading MCP metadata hides real tool side effects" if self.lang == "en" else "误导性 MCP 元数据掩盖工具真实副作用")
         return list(scenarios) if scenarios else ["Unknown impacts"]
 
     def _infer_recommendations(self, issues: List[Dict[str, Any]]) -> List[str]:
@@ -126,4 +144,8 @@ class MarkdownReporter:
                 recommendations.add("Implement robust prompt filtering and output validation." if self.lang == "en" else "实施强有力的 Prompt 过滤与输出验证以防止注入 (Prompt Filtering)")
             elif cat == "Backdoor":
                 recommendations.add("Review code for hidden payloads and obfuscation." if self.lang == "en" else "人工审查识别出的加密混淆或可疑的隐藏触发逻辑 (Code Review)")
+            elif cat in {"MCP Tool Poisoning", "MCP Tool Poisoning Chain"}:
+                recommendations.add("Block the raw MCP result from agent context and do not execute induced tool calls." if self.lang == "en" else "阻止原始 MCP 内容进入 Agent 上下文，不执行其诱导的后续工具调用")
+            elif cat in {"MCP Annotation Mismatch", "MCP Tool Metadata"}:
+                recommendations.add("Quarantine the tool until its annotations and implementation are independently verified." if self.lang == "en" else "隔离该工具，直到 annotations 与真实实现经过独立核验")
         return list(recommendations) if recommendations else ["Review code logic manually."]

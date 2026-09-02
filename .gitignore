@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+AGENT_SECURITY_REPORT.md
+SKILL_SECURITY_REPORT.md
+MCP_SECURITY_REPORT.md
+.DS_Store
+.idea/

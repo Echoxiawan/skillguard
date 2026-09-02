@@ -3,8 +3,9 @@ import json
 from typing import Dict, List, Any
 
 class SkillScanner:
-    def __init__(self, root_dir: str):
+    def __init__(self, root_dir: str, include_installed: bool = False):
         self.root_dir = os.path.abspath(root_dir)
+        self.include_installed = include_installed
         self.skills = []
 
     def discover_skills(self) -> List[Dict[str, Any]]:
@@ -15,27 +16,33 @@ class SkillScanner:
         - Cursor .cursorrules
         - Kiro / OpenClaw 插件形式 (package.json 或 main.py 目录)
         - 独立的 Python/JS 模块包含特征文件
-        - 自动侦测 ~/.claude/skills, ~/.openclaw/skills 等全局安装目录
+        - 可选扫描 ~/.codex/skills、~/.claude/skills 等全局安装目录
         """
         discovered = []
 
-        # 获取需要扫描的所有基础目录 (目标目录 + 全局内置的特征目录)
+        # 默认只扫描明确指定的目标；全局目录必须显式开启。
         scan_targets = [self.root_dir]
         
         home_dir = os.path.expanduser("~")
         global_skill_paths = [
+            os.path.join(home_dir, ".codex", "skills"),
+            os.path.join(home_dir, ".agents", "skills"),
             os.path.join(home_dir, ".claude", "skills"),
             os.path.join(home_dir, ".openclaw", "skills"),
             os.path.join(home_dir, ".cursor", "rules"), # Cursor Global Rules
             os.path.join(home_dir, ".kiro", "skills")
         ]
         
-        for gp in global_skill_paths:
-            if os.path.exists(gp) and gp not in scan_targets:
-                scan_targets.append(gp)
+        if self.include_installed:
+            for gp in global_skill_paths:
+                if os.path.isdir(gp) and gp not in scan_targets:
+                    scan_targets.append(gp)
 
         for base_dir in scan_targets:
-            for root, dirs, files in os.walk(base_dir):
+            for root, dirs, files in os.walk(base_dir, followlinks=False):
+                dirs[:] = [d for d in dirs if not d.startswith('.') and d not in {
+                    'node_modules', 'venv', '.venv', 'env', '__pycache__', 'dist', 'build'
+                }]
                 skill_info = None
 
                 # 1. 识别基于 Node/前端 的 Skill (package.json)
@@ -49,8 +56,12 @@ class SkillScanner:
                 # 3. 识别基于 Cursor Rules 的零散 Skill
                 elif '.cursorrules' in files or 'cursor.yaml' in files:
                     skill_info = self._parse_cursor_rules(root)
+
+                # 4. 识别独立 MCP 客户端配置
+                elif any(name.lower() in {'mcp.json', 'mcp_config.json', 'mcp-config.json'} for name in files):
+                    skill_info = self._parse_mcp_config(root)
                 
-                # 4. 识别 Anthropic / Claude Code 的标准 Skill (SKILL.md)
+                # 5. 识别 Anthropic / Claude Code 的标准 Skill (SKILL.md)
                 elif 'SKILL.md' in files or 'skill.md' in (f.lower() for f in files):
                     skill_info = self._parse_anthropic_skill(root, files)
                 
@@ -59,8 +70,6 @@ class SkillScanner:
                     skill_info['source_files'] = self._collect_source_files(root)
                     discovered.append(skill_info)
                     
-                    # 为避免重复扫描子目录对应的同个项目，排除隐藏目录或如 node_modules
-                    dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ['node_modules', 'venv', 'env', '__pycache__']]
 
         # 依据路径对结果去重
         unique_skills = []
@@ -127,6 +136,18 @@ class SkillScanner:
             "entry": ".cursorrules"
         }
 
+    def _parse_mcp_config(self, root: str) -> Dict[str, Any]:
+        return {
+            "name": f"MCP-Config-{os.path.basename(root)}",
+            "description": "MCP server configuration",
+            "author": "Unknown",
+            "version": "local",
+            "path": root,
+            "dependencies": [],
+            "entry": next((name for name in os.listdir(root)
+                           if name.lower() in {'mcp.json', 'mcp_config.json', 'mcp-config.json'}), None)
+        }
+
     def _parse_anthropic_skill(self, root: str, files: List[str]) -> Dict[str, Any]:
         info = {
             "name": os.path.basename(root),
@@ -162,10 +183,18 @@ class SkillScanner:
 
     def _collect_source_files(self, root: str) -> List[str]:
         src_files = []
-        EXTENSIONS = ['.py', '.js', '.ts', '.sh', '.bash', '.json', '.yaml', '.yml', '.md', '.txt', '.cursorrules']
-        for r, ds, fs in os.walk(root):
-            ds[:] = [d for d in ds if d not in ['node_modules', 'venv', 'env', '.git', '__pycache__']]
+        EXTENSIONS = [
+            '.py', '.js', '.jsx', '.ts', '.tsx', '.sh', '.bash', '.zsh', '.ps1',
+            '.json', '.yaml', '.yml', '.md', '.mdc', '.rst', '.txt', '.cursorrules'
+        ]
+        ignored_files = {'AGENT_SECURITY_REPORT.md', 'SKILL_SECURITY_REPORT.md'}
+        for r, ds, fs in os.walk(root, followlinks=False):
+            ds[:] = [d for d in ds if not d.startswith('.') and d not in {
+                'node_modules', 'venv', '.venv', 'env', '__pycache__', 'dist', 'build'
+            }]
             for f in fs:
-                if any(f.endswith(ext) for ext in EXTENSIONS):
-                    src_files.append(os.path.join(r, f))
-        return src_files
+                path = os.path.join(r, f)
+                if (f not in ignored_files and not os.path.islink(path)
+                        and any(f.endswith(ext) for ext in EXTENSIONS)):
+                    src_files.append(path)
+        return sorted(src_files)

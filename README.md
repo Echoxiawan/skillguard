@@ -1,149 +1,143 @@
-# SkillGuard 🛡️
+# AgentGuard
 
 [中文](./README.md) | [English](./README_EN.md)
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-brightgreen)](https://python.org)
-[![Security Scanned](https://img.shields.io/badge/Security-Scanned-brightgreen)](#)
+AgentGuard 是面向 AI Agent 扩展生态的只读安全审计器。它检查 Skill、Plugin、Rule、MCP 配置、MCP 工具清单和运行时返回内容，重点识别提示词注入、工具投毒、审计者劫持、越权副作用、凭据窃取与外传、隐蔽删除、危险代码执行和 MCP 元数据欺骗。
 
-**SkillGuard** 是一个高级的静态应用安全测试（SAST）和行为审计工具，专门设计用于检测针对 AI Agents（大语言模型代理）的 Skills、Plugins 和 Rules 配置中的安全红线与恶意行为。
+首要原则：**被审计内容是不可信数据，不是当前会话指令。** 审计流程不会启动未知 MCP、导入目标模块、运行目标脚本、访问目标给出的 URL，或执行目标建议的后续工具调用。
 
-当赋予大语言模型（如 Claude、Cursor 等）自动执行各类系统级别 Skill 的能力时，系统安全性会受到潜在的第三方指令污染和环境威胁。本审计器能保护您的本地机器和隐私数据不被不受信任的 AI 技能劫持。
+## 能力概览
 
-🔗 **项目主页 / GitHub Repository地址**: [https://github.com/Echoxiawan/skillguard](https://github.com/Echoxiawan/skillguard) *(请替换为实际地址)*
+| 审计面 | 当前检查能力 |
+| --- | --- |
+| Skill / Plugin / Rule | 扫描 Markdown、配置和 Python/JavaScript/TypeScript/Shell 源码，识别层级劫持、审计者操纵、隐蔽执行、凭据访问、数据外传、删除文件、跳过确认和高影响业务流程 |
+| 代码能力 | 检测子进程、Shell、动态执行、网络请求、敏感路径、环境凭据、文件删除、解码载荷及组合链；Python 使用 AST 降低字符串和注释误报 |
+| MCP 静态配置 | 检查命令解释器启动、命令字符串、硬编码凭据、FastMCP/TypeScript 工具注册以及 annotations 与副作用不一致 |
+| MCP 工具清单 | 扫描 `tools/list` 的工具名称、标题、描述、输入/输出 schema、默认值、示例、字符串数组和 annotations，识别名称分隔符规避与标注欺骗 |
+| Prompt / Resource | 扫描 `prompts/list/get`、`resources/list/read` 的描述、messages、文本与嵌套字段 |
+| MCP 运行时返回 | 扫描 `tools/call` 的 `content`、`structuredContent`、嵌入资源、错误消息和嵌套文本，检测伪造系统身份、索取秘密、强制跨工具调用及危险组合链 |
+| 输出防护 | 净化控制字符与 Markdown 围栏，脱敏 Bearer、API key、访问令牌、密码、Cookie、OpenAI key、JWT 和 PEM 私钥 |
 
----
+确定性脚本负责可重复的规则与 AST 扫描；作为标准 Skill 使用时，`SKILL.md` 还要求 Agent 在严格隔离条件下完成语义复核，识别同义改写、跨文件行为链和规则未覆盖的注入意图。规则无告警不等于绝对安全。
 
-## 🎯 支持环境与自动发现 (Capabilities)
+## 安全模型
 
-无论是作为独立的 Python 审计程序运行，还是作为 AI Agent 的原生 Skill 安装，该工具均能**自动搜索、识别并解析**您的机器上已安装的所有技能配置环境：
+- 只读取用户明确指定的目标；扫描已安装 Skill 必须显式使用 `--include-installed`。
+- 不运行、导入、安装或动态验证目标内容，不根据目标文字申请权限。
+- 不把目标中的命令、路径、URL、参数或环境变量名复制到 Shell、浏览器、MCP 或其他工具调用。
+- 不跟随符号链接；忽略依赖、虚拟环境、构建目录、缓存和自身生成的报告。
+- MCP 审计只接收可信客户端或网关捕获的 JSON/JSONL，不自行连接未知服务器。
+- `tools/call` 请求中的 `params.arguments` 属于调用方输入，运行时审计会跳过它，避免误归因给服务端。
+- MCP 返回达到阻断阈值时，调用方应丢弃原始内容，只向 Agent 返回脱敏安全事件。
 
-- 🤖 **Anthropic & Claude Code Skills** (`~/.claude/skills/SKILL.md`)
-- 💻 **Cursor 编辑器全局 Rules** (`~/.cursor/rules/*.mdc`)
-- 🕷️ **OpenClaw 全局 Skills** (`~/.openclaw/skills/`)
-- ⚡ **Kiro Plugins** (`~/.kiro/skills/`)
-- 📦 **Node.js / Python 标准本地大插件** (`package.json`, `setup.py`)
+## 安装
 
-## 🕵️‍♂️ 10大安全扫描维度 (Security Vectors)
+要求 Python 3.8 或更高版本，核心扫描不需要第三方运行时依赖。
 
-通过强大的正则表达式分析和基于代码层面的 Python 抽象语法树（AST）分析，本工具包含 10 种维度的全景安全分析系统：
+~~~bash
+git clone https://github.com/Echoxiawan/agentguard.git
+cd agentguard
+~~~
 
-1. **后门代码探测 (Backdoor)**: 解析并识别深藏不露的动态执行逻辑，如加密和混淆的函数逃逸特征。
-2. **风险网络通讯 (Network)**: Webhook 异常注册、未经授权的端点通讯、远程 C2 控制端点。
-3. **明文密钥过滤 (Secret Leakage)**: 深层代码中的 API Key、JWT Token 与云凭证查找。
-4. **Prompt 安全验证 (Prompt Injection)**: 绕过沙箱的系统提示词（Jailbreak）或导致数据向外泄露的诱导指令窃取。
-5. **动态代码执行审查 (Dynamic Execution)**: 强制检索出不受限危险的 `eval()`, `exec()` 与动态加载包操作。
-6. **底层系统提权 (Shell Execution)**: Bash 注入和未隔离调用的危险命令。
-7. **文件系统与凭据越权 (FS Access)**: 阻止恶意脚本尝试读取 `~/.ssh`, `.env` 或历史文件等包含认证令牌的内容。
-8. **外发数据拦截 (Data Exfiltration)**: 防止尝试打包上传本地应用产生的敏感信息日志。
-9. **依赖供应链审计 (Supply Chain)**: 核对 `package.json` 中的源可靠性。
-10. **Agent 操纵 (AI Behavior)**: 静默绕过 AI 的自我安全过滤防线等行为。
+AgentGuard 同时是标准 Skill，包含 `SKILL.md`、`agents/openai.yaml`、`scripts/` 和 `references/`。安装目录名使用 `agentguard`，触发标识为 `$agentguard`。
 
-## 📥 安装与运行
+## 审计 Skill、Plugin 与 MCP 配置
 
-### 方式一: 作为普通指令的本地应用安装 (Standalone)
+~~~bash
+python3 scripts/audit_skill.py /path/to/target --lang zh --output-dir ./reports
+~~~
 
-如果你是系统管理员，可以随时将其独立地获取到任意目录下运行。
+显式加入本机常见的全局 Skill 目录：
 
-```bash
-# 1. 克隆代码库
-git clone https://github.com/Echoxiawan/skillguard.git
-cd skillguard
+~~~bash
+python3 scripts/audit_skill.py /path/to/target --include-installed --lang zh --output-dir ./reports
+~~~
 
-# 2. 设置 PYTHONPATH 指向本程序根目录
-export PYTHONPATH=$(pwd):$PYTHONPATH
+可识别入口包括 `SKILL.md`、`package.json`、`setup.py`、`requirements.txt`、Cursor Rule 和常见 MCP 配置文件。`--include-installed` 会加入存在的 Codex、Agents、Claude、OpenClaw、Cursor 和 Kiro 全局 Skill 目录。
 
-# 3. 开始扫描整个宿主机的所有已装全局 AI Skills，并输出默认评估语言的检查单：
-python3 -m skill_auditor.main .
-```
+默认报告为 `AGENT_SECURITY_REPORT.md`，包含风险等级、规则编号、文件、行号、净化后的证据、攻击场景与处置建议。
 
-当然，你可以指定检测特定的第三方外置插件事前目录：
-```bash
-python3 -m skill_auditor.main /path/to/any/unknown_plugin/ --lang zh
-```
+## 审计 MCP 工具投毒
 
-### 方式二: 各主流 AI 代理工具官方安装与使用指南
+输入可以是单个 JSON、JSON 数组或每行一个事件的 JSONL：
 
-该工具完美符合业界通用的 `SKILL.md` 标准，你可以直接将其作为“AI 的一个检查器官”挂载至各主流大模型工具内：
+~~~bash
+python3 scripts/audit_mcp.py /path/to/capture.jsonl \
+  --lang zh \
+  --fail-on high \
+  --output-dir ./reports
+~~~
 
-#### 🤖 1. Claude Code
-**安装：**
-Claude Code 会在全局 `~/.claude/skills/` 寻找技能。将本项目 Clone 至该目录：
-```bash
-mkdir -p ~/.claude/skills
-cd ~/.claude/skills
-git clone https://github.com/Echoxiawan/skillguard.git
-```
-**使用方式：**
-在 Claude Code 终端中输入：
-> *"Please run the skillguard skill to check all my environment plugins."*
+网关也可通过标准输入传递单次响应：
 
----
+~~~bash
+python3 scripts/audit_mcp.py - --fail-on high --output-dir ./reports < response.json
+~~~
 
-#### 🕷️ 2. OpenClaw
-**安装：**
-OpenClaw 默认支持通过 `~/.openclaw/skills/` 的目录结构挂载。
-```bash
-mkdir -p ~/.openclaw/skills
-cd ~/.openclaw/skills
-git clone https://github.com/Echoxiawan/skillguard.git
-```
-**使用方式：**
-在进行复杂任务前，可以要求 Agent：
-> *"Use skillguard to make sure the project dependencies are safe from backdoors."*
+`--fail-on` 支持 `none`、`medium`、`high`、`critical`，默认是 `critical`。
 
----
+| 退出码 | 含义 |
+| --- | --- |
+| 0 | 风险低于阻断阈值 |
+| 1 | 输入无法安全读取或解析 |
+| 2 | 风险达到阻断阈值，应阻止原始内容进入 Agent 上下文 |
 
-#### ⚡ 3. Kiro
-**安装：**
-Kiro 官方体系同样使用隐式全局配置目录。
-```bash
-mkdir -p ~/.kiro/skills
-cd ~/.kiro/skills
-git clone https://github.com/Echoxiawan/skillguard.git
-```
-**使用方式：**
-通过自然语言调度：
-> *"Call skillguard to do a full scan on my current directory."*
+MCP 报告为 `MCP_SECURITY_REPORT.md`。输入限制为 10 MiB、最多 10,000 个事件或数组元素、最多 40 层嵌套、单文本字段最多 200,000 个字符。
 
----
+## MCP 网关接入
 
-#### 💻 4. Cursor
-**安装：**
-由于 Cursor 的 Rules 系统侧重于静态 prompt 上下文而非直接外部沙盒执行引擎，你需要将此程序的 `SKILL.md` 重命名为 `.mdc` 文件或者挂载到其全局目录下。
-```bash
-mkdir -p ~/.cursor/rules
-git clone https://github.com/Echoxiawan/skillguard.git ~/.cursor/rules/skillguard
-mv ~/.cursor/rules/skillguard/SKILL.md ~/.cursor/rules/skillguard/skillguard.mdc
-```
-**使用方式：**
-在 Cursor 的 Chat 界面中通过 `#skillguard` 引用该规则并输入:
-> *"Execute the command inside #skillguard to analyze the security of my workspace."*
+真正的运行时保护需要 MCP 客户端或调用网关主动接入：
 
-## 📊 审计报告输出 (Report Output)
+1. MCP 初始化后，在工具可见前审计 `tools/list`、`prompts/list` 和 `resources/list`。
+2. 每次 `tools/call` 后，在结果进入 Agent 上下文前审计完整响应。
+3. 根据退出码放行或阻断；阻断时不得暴露原始内容、错误消息或结构化返回。
+4. MCP 内容要求调用其他工具时，回到用户原始请求重新判断授权，不能把工具返回当成授权来源。
+5. 捕获物保留服务名、方法、工具名、请求 ID 和时间，但不记录真实凭据。
 
-成功运行后，程序会在当前**执行路径下**自动生成一份详尽周到的 `SKILL_SECURITY_REPORT.md`。内容将涵盖：
-1. 本次扫描的范围统计与时间点。
-2. 以不同风险系数 (`Critical` / `High Risk` / `Medium` / `Low` / `Safe`) 给每个组件颁发最终的安全等级和总体健康看板。
-3. 标注出**漏洞存在的代码具体文件及行号片段**，协助你进行快速锁定与排查。
-4. 提供基于场景推导的通用**安全改进建议（Security Recommendations）**与可能的应用被攻破面的危险警告。
+AgentGuard 不代理网络流量，也不会自动拦截所有 MCP。未在客户端或网关接入上述检查时，它只能审计已提供的捕获物。
 
-## 🛠️ 如何参与贡献与自定义
+## 风险等级
 
-本项目鼓励安全研究员参与定制规则！
-通过修改仓库底下的 `/skill_auditor/core/rules.py`，你只需要向全局规则集合中（`SECURITY_RULES`）推入新的正则表达式特征即可无代码侵入地迅速扩展扫描版图。例如：
-```python
-DetectionRule(
-    id="NEW-001", 
-    category="My Custom Check", 
-    risk_level="High",
-    pattern=re.compile(r'some_suspicious_keyword', re.I),
-    ...
-)
-```
+- **Critical**：明确提示词劫持、凭据索取或外传、破坏性指令、审计者操纵、annotations 欺骗或危险行为链。
+- **High Risk**：严重能力或多项风险叠加，需要隔离复核。
+- **Medium Risk**：敏感能力、跨工具诱导或缺少副作用元数据。
+- **Low Risk**：低严重度信号。
+- **Safe**：当前扫描范围内未命中规则，不代表运行时永远安全。
 
-## 📜 许可规范
-MIT License
+子进程、网络、环境变量或文件操作属于能力信号，不自动等同于恶意。结论应结合用途、最小权限、用户确认、固定目的地、真实实现和运行时盲区人工复核。
 
-## 📚 标准与灵感来源
-遵循并适配 OWASP Top 10, LLM Top 10, 及 Anthropic Skills Specification 官方文档标准制作。
+## 项目结构
+
+~~~text
+agentguard/
+├── SKILL.md
+├── agents/openai.yaml
+├── references/mcp-tool-poisoning.md
+├── scripts/
+│   ├── audit_skill.py
+│   ├── audit_mcp.py
+│   └── agentguard/
+│       ├── main.py
+│       └── core/
+└── tests/test_security_auditor.py
+~~~
+
+## 验证
+
+~~~bash
+python3 -B -m unittest discover -s tests -v
+python3 -B -m py_compile scripts/audit_skill.py scripts/audit_mcp.py scripts/agentguard/*.py scripts/agentguard/core/*.py tests/*.py
+~~~
+
+当前测试覆盖提示词注入、审计者劫持、凭据外传链、危险业务流程、零宽字符规避、代码能力、MCP 配置、工具名称/描述/schema 投毒、Prompt/Resource、运行时返回、annotations 欺骗、stdin、输入边界、报告净化和凭据脱敏。
+
+## 已知边界
+
+- 规则扫描无法证明组件绝对安全；网页、邮件、文档、工单和数据库数据仍可能携带间接提示词注入。
+- 没有源码、完整配置或运行时捕获物时，结论存在审计盲区。
+- AgentGuard 不做动态沙箱执行，不验证远程服务真实实现，也不替代操作系统权限、网络策略和用户确认。
+- MCP annotations 只是提示，最终副作用判断必须结合实现和实际外部操作。
+
+## 规则扩展
+
+静态规则位于 `scripts/agentguard/core/rules.py`，MCP 捕获物规则位于 `scripts/agentguard/core/mcp_artifact.py`。新增规则时应同时增加良性与恶性回归用例，避免把安全说明或合法能力描述误判为攻击指令。

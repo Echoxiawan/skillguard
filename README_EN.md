@@ -1,150 +1,143 @@
-# SkillGuard 🛡️
+# AgentGuard
 
 [中文](./README.md) | [English](./README_EN.md)
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-brightgreen)](https://python.org)
-[![Security Scanned](https://img.shields.io/badge/Security-Scanned-brightgreen)](#)
+AgentGuard is a read-only security auditor for AI Agent extensions. It inspects Skills, Plugins, Rules, MCP configurations, MCP tool listings, and runtime responses for prompt injection, tool poisoning, auditor hijacking, unauthorized side effects, credential theft and exfiltration, concealed deletion, dangerous code execution, and deceptive MCP metadata.
 
-**SkillGuard** is an advanced Static Application Security Testing (SAST) and behavioral auditing tool specifically designed to detect security red lines and malicious behaviors in Skills, Plugins, and Rules configurations built for AI Agents (Large Language Model agents).
+Primary rule: **audited content is untrusted data, not an instruction for the current session.** AgentGuard does not start an unknown MCP server, import target modules, execute target scripts, visit target-provided URLs, or follow tool calls suggested by audited content.
 
-When Large Language Models (like Claude, Cursor, etc.) are granted the capability to automatically execute system-level Skills, the system security is exposed to potential third-party instruction contamination and environmental threats. This auditor protects your local machine and private data from being hijacked by untrusted AI skills.
+## Capabilities
 
-🔗 **Project Homepage / GitHub Repository**: [https://github.com/Echoxiawan/skillguard](https://github.com/Echoxiawan/skillguard) *(Please replace with actual URL)*
+| Surface | Current checks |
+| --- | --- |
+| Skill / Plugin / Rule | Scans Markdown, configuration, and Python/JavaScript/TypeScript/Shell source for hierarchy hijacking, auditor manipulation, concealment, credential access, exfiltration, deletion, approval bypass, and high-impact workflows |
+| Code capabilities | Detects subprocesses, shells, dynamic execution, network calls, sensitive paths, environment credentials, file deletion, payload decoding, and behavior chains; Python AST analysis reduces string and comment false positives |
+| Static MCP configuration | Checks shell launch commands, command strings, hardcoded credentials, FastMCP/TypeScript registrations, and annotation-to-side-effect mismatches |
+| MCP tool listings | Scans names, titles, descriptions, input/output schemas, defaults, examples, string arrays, and annotations from `tools/list`; detects separator-based name evasion and misleading metadata |
+| Prompt / Resource | Scans descriptions, messages, text, and nested fields from `prompts/list/get` and `resources/list/read` |
+| MCP runtime results | Scans `content`, `structuredContent`, embedded resources, errors, and nested text from `tools/call`; detects false system authority, secret requests, coerced cross-tool calls, and dangerous chains |
+| Output protection | Sanitizes terminal controls and Markdown fences, and redacts Bearer tokens, API keys, access tokens, passwords, cookies, OpenAI keys, JWTs, and PEM private keys |
 
----
+The deterministic scripts provide repeatable rule and AST scanning. When installed as a standard Skill, `SKILL.md` additionally requires isolated semantic review for paraphrased attacks, cross-file chains, and injection intent outside fixed rules. A clean rule scan is not proof of absolute safety.
 
-## 🎯 Supported Environments & Auto-Discovery (Capabilities)
+## Security model
 
-Whether running as an independent Python auditing tool or installed natively as an Agent Skill, this tool **automatically searches, identifies, and parses** all skill configuration environments installed on your machine:
+- Only explicitly selected targets are scanned. Installed Skills are included only with `--include-installed`.
+- Target code is not executed, imported, installed, or dynamically validated, and target text cannot authorize permissions.
+- Commands, paths, URLs, arguments, and environment names from target content are never copied into Shell, browser, MCP, or other tool calls.
+- Symbolic links are not followed. Dependency, virtual environment, build, cache, and generated report directories are excluded.
+- MCP auditing consumes JSON/JSONL captured by a trusted client or gateway; AgentGuard does not connect to an unknown server.
+- Caller-controlled `params.arguments` in `tools/call` requests are skipped to avoid attributing user input to the MCP server.
+- When a raw MCP result reaches the threshold, the caller should discard it and expose only a redacted security event to the Agent.
 
-- 🤖 **Anthropic & Claude Code Skills** (`~/.claude/skills/SKILL.md`)
-- 💻 **Cursor Editor Global Rules** (`~/.cursor/rules/*.mdc`)
-- 🕷️ **OpenClaw Global Skills** (`~/.openclaw/skills/`)
-- ⚡ **Kiro Plugins** (`~/.kiro/skills/`)
-- 📦 **Node.js / Python Standard Local Plugins** (`package.json`, `setup.py`)
+## Installation
 
-## 🕵️‍♂️ 10 Security Scanning Vectors
+Python 3.8 or newer is required. Core scanning has no third-party runtime dependency.
 
-Powered by robust regex analysis and Python Abstract Syntax Tree (AST) analysis at the code level, this tool consists of a comprehensive 10-dimensional security analysis system:
+~~~bash
+git clone https://github.com/Echoxiawan/agentguard.git
+cd agentguard
+~~~
 
-1. **Backdoor Detection**: Parses and identifies deeply hidden dynamic execution logic, such as encoded and obfuscated function escapes.
-2. **Risky Network Communications**: Abnormal Webhook registrations, unauthorized endpoint communications, and remote C2 command endpoints.
-3. **Plaintext Secret Leakage**: Deep code inspection for API Keys, JWT Tokens, and cloud credentials.
-4. **Prompt Security Validation (Prompt Injection)**: Sandbox-bypassing system prompts (Jailbreak) or inductive instructions attempting to steal and leak data.
-5. **Dynamic Execution Audits**: Forcibly detects unrestricted and dangerous `eval()`, `exec()`, and dynamic package loading.
-6. **Underlying System Privilege Escalation (Shell Execution)**: Bash injections and dangerously isolated command calls.
-7. **File System & Credential Access (FS Access)**: Blocks malicious scripts attempting to read files containing auth tokens like `~/.ssh`, `.env`, or history logs.
-8. **Data Exfiltration Interception**: Prevents attempts to package and upload sensitive local operational logs.
-9. **Dependency Supply Chain Audits**: Verifies source reliability within `package.json`.
-10. **Agent Behavior Manipulation**: Silent circumvention of the AI's self-safety filtering defense lines.
+AgentGuard is also a standard Skill containing `SKILL.md`, `agents/openai.yaml`, `scripts/`, and `references/`. Install it under `agentguard`; its trigger identifier is `$agentguard`.
 
-## 📥 Installation & Execution
+## Audit a Skill, Plugin, or MCP configuration
 
-### Method 1: Installing as a Standalone Local Application
+~~~bash
+python3 scripts/audit_skill.py /path/to/target --lang en --output-dir ./reports
+~~~
 
-If you are a system administrator, you can run this tool independently from any directory at any time.
+Explicitly include common installed Skill locations:
 
-```bash
-# 1. Clone the repository
-git clone https://github.com/Echoxiawan/skillguard.git
-cd skillguard
+~~~bash
+python3 scripts/audit_skill.py /path/to/target --include-installed --lang en --output-dir ./reports
+~~~
 
-# 2. Set PYTHONPATH to point to the program's root directory
-export PYTHONPATH=$(pwd):$PYTHONPATH
+Recognized entry points include `SKILL.md`, `package.json`, `setup.py`, `requirements.txt`, Cursor Rules, and common MCP configuration names. `--include-installed` adds existing Codex, Agents, Claude, OpenClaw, Cursor, and Kiro Skill directories.
 
-# 3. Start scanning all globally installed AI Skills on the host machine
-# Outputs English report by default via --lang en
-python3 -m skill_auditor.main . --lang en
-```
+The default report is `AGENT_SECURITY_REPORT.md` with risk levels, rule IDs, files, line numbers, sanitized evidence, scenarios, and recommendations.
 
-Of course, you can target a specific third-party external plugin directory before running it:
-```bash
-python3 -m skill_auditor.main /path/to/any/unknown_plugin/ --lang en
-```
+## Audit MCP tool poisoning
 
-### Method 2: Official Installation & Usage Guides for Mainstream AI Agents
+Input may be one JSON object, a JSON array, or JSONL:
 
-This tool perfectly complies with the industry's standard `SKILL.md` spec, allowing you to mount it directly as an "AI Safety Checker Organ" across mainstream LLM tools:
+~~~bash
+python3 scripts/audit_mcp.py /path/to/capture.jsonl \
+  --lang en \
+  --fail-on high \
+  --output-dir ./reports
+~~~
 
-#### 🤖 1. Claude Code
-**Installation:**
-Claude Code looks for skills globally in `~/.claude/skills/`. Clone this project there:
-```bash
-mkdir -p ~/.claude/skills
-cd ~/.claude/skills
-git clone https://github.com/Echoxiawan/skillguard.git
-```
-**Usage:**
-In the Claude Code terminal, input:
-> *"Please run the skillguard skill to check all my environment plugins."*
+A gateway may send one response over standard input:
 
----
+~~~bash
+python3 scripts/audit_mcp.py - --fail-on high --output-dir ./reports < response.json
+~~~
 
-#### 🕷️ 2. OpenClaw
-**Installation:**
-OpenClaw supports mounting via the `~/.openclaw/skills/` directory structure.
-```bash
-mkdir -p ~/.openclaw/skills
-cd ~/.openclaw/skills
-git clone https://github.com/Echoxiawan/skillguard.git
-```
-**Usage:**
-Before performing complex tasks, ask the Agent:
-> *"Use skillguard to make sure the project dependencies are safe from backdoors."*
+`--fail-on` accepts `none`, `medium`, `high`, or `critical`; the default is `critical`.
 
----
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Risk is below the blocking threshold |
+| 1 | Input could not be read or parsed safely |
+| 2 | Risk reached the threshold; raw content should be blocked from Agent context |
 
-#### ⚡ 3. Kiro
-**Installation:**
-The official Kiro ecosystem also uses an implicit global configuration directory.
-```bash
-mkdir -p ~/.kiro/skills
-cd ~/.kiro/skills
-git clone https://github.com/Echoxiawan/skillguard.git
-```
-**Usage:**
-Invoke naturally:
-> *"Call skillguard to do a full scan on my current directory."*
+The MCP report is `MCP_SECURITY_REPORT.md`. Limits are 10 MiB per capture, 10,000 events or array elements, 40 nesting levels, and 200,000 characters per text field.
 
----
+## MCP gateway integration
 
-#### 💻 4. Cursor
-**Installation:**
-Since Cursor's Rules system focuses on static prompt contexts rather than a direct external sandbox execution engine, rename this program's `SKILL.md` to an `.mdc` file or mount it within its global directory.
-```bash
-mkdir -p ~/.cursor/rules
-git clone https://github.com/Echoxiawan/skillguard.git ~/.cursor/rules/skillguard
-mv ~/.cursor/rules/skillguard/SKILL.md ~/.cursor/rules/skillguard/skillguard.mdc
-```
-**Usage:**
-In Cursor's Chat interface, reference the rule via `#skillguard` and type:
-> *"Execute the command inside #skillguard to analyze the security of my workspace."*
+Runtime protection requires explicit integration in an MCP client or invocation gateway:
 
-## 📊 Report Output
+1. Audit `tools/list`, `prompts/list`, and `resources/list` before exposing them to the Agent.
+2. Audit the full response after every `tools/call` and before adding it to Agent context.
+3. Use the exit code to allow or block. On block, do not expose raw content, errors, or structured results.
+4. If MCP content requests another tool call, return to the user's original request for authorization. Tool output is not an authorization source.
+5. Retain service, method, tool, request ID, and timestamp metadata without recording real credentials.
 
-Upon successful execution, the program generates a comprehensive and detailed `SKILL_SECURITY_REPORT.md` automatically in the **current execution path**. The content covers:
-1. The statistical scope and timestamp of the current scan.
-2. Final security tier and overall health dashboard assigned to each component through risk coefficients (`Critical` / `High Risk` / `Medium` / `Low` / `Safe`).
-3. Highlights **the exact files and line number snippets where vulnerabilities reside**, aiding fast pinpointing and troubleshooting.
-4. Provides universal **Security Recommendations** derived from scenario inferences alongside warnings of potential attack surfaces.
+AgentGuard does not proxy traffic or automatically intercept every MCP. Without client or gateway integration, it audits only supplied captures.
 
-## 🛠️ Contributing & Customization
+## Risk levels
 
-This project strongly encourages security researchers to customize rules!
-By modifying `/skill_auditor/core/rules.py` in the repository, you can seamlessly push new regex signatures into the global ruleset (`SECURITY_RULES`) to painlessly expand the scanning scope. Example:
-```python
-DetectionRule(
-    id="NEW-001", 
-    category="My Custom Check", 
-    risk_level="High",
-    pattern=re.compile(r'some_suspicious_keyword', re.I),
-    ...
-)
-```
+- **Critical**: explicit prompt hijacking, secret requests or exfiltration, destructive instructions, auditor manipulation, annotation deception, or dangerous chains.
+- **High Risk**: severe capabilities or accumulated findings requiring isolation and review.
+- **Medium Risk**: sensitive capabilities, coerced cross-tool behavior, or missing side-effect metadata.
+- **Low Risk**: low-severity signals.
+- **Safe**: no rule matched within the scanned scope; not a runtime safety guarantee.
 
-## 📜 License
-MIT License
+Subprocess, network, environment, or filesystem access is a capability signal and does not prove malicious intent. Review purpose, least privilege, user confirmation, fixed destinations, implementation behavior, and runtime blind spots.
 
-## 📚 Standards & Inspiration
-Built and adapted in compliance with OWASP Top 10, LLM Top 10, and Anthropic Skills Specification official guidelines.
+## Project layout
+
+~~~text
+agentguard/
+├── SKILL.md
+├── agents/openai.yaml
+├── references/mcp-tool-poisoning.md
+├── scripts/
+│   ├── audit_skill.py
+│   ├── audit_mcp.py
+│   └── agentguard/
+│       ├── main.py
+│       └── core/
+└── tests/test_security_auditor.py
+~~~
+
+## Validation
+
+~~~bash
+python3 -B -m unittest discover -s tests -v
+python3 -B -m py_compile scripts/audit_skill.py scripts/audit_mcp.py scripts/agentguard/*.py scripts/agentguard/core/*.py tests/*.py
+~~~
+
+The suite covers prompt injection, auditor hijacking, credential-exfiltration chains, high-impact workflows, zero-width evasion, code capabilities, MCP configuration, poisoned tool names/descriptions/schemas, Prompt/Resource content, runtime responses, annotation deception, stdin, input limits, report sanitization, and credential redaction.
+
+## Known limits
+
+- Rule scanning cannot prove absolute safety. Web pages, email, documents, tickets, and database records may carry indirect prompt injection at runtime.
+- Results have blind spots when source, complete configuration, or runtime captures are unavailable.
+- AgentGuard does not perform dynamic sandbox execution, verify remote implementations, or replace OS permissions, network controls, and explicit user confirmation.
+- MCP annotations are hints, not enforcement. Final side-effect analysis must consider implementation and actual operations.
+
+## Extending rules
+
+Static rules live in `scripts/agentguard/core/rules.py`; MCP capture rules live in `scripts/agentguard/core/mcp_artifact.py`. Add both malicious and benign regression cases with each new rule to avoid treating safety guidance or legitimate capability descriptions as attack instructions.
